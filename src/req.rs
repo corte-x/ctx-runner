@@ -1,11 +1,7 @@
 use anyhow::Context;
-use color_print::{cformat, cprintln};
-use futures_lite::{stream::NextFuture, StreamExt};
-use http_body_util::{combinators::BoxBody, BodyExt, Full};
-use hyper::{
-    body::{Body, Bytes, Frame},
-    Request, Response,
-};
+use futures_lite::StreamExt;
+use http_body_util::{BodyExt, Full};
+use hyper::{body::Bytes, Request};
 use tokio::net::TcpStream;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -37,7 +33,7 @@ pub async fn send(
 
     tokio::task::spawn(async move {
         if let Err(err) = conn.await {
-            cprintln!("{}", cformat!("Connection failed: {:?}", err));
+            tracing::error!(name: "h2", "Connection failed: {:?}", err);
         }
     });
 

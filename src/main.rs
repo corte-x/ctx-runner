@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use async_recursion::async_recursion;
-use color_print::cprintln;
 use futures_lite::StreamExt;
 use http_body_util::Full;
 use hyper::{body::Bytes, Request};
