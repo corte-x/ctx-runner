@@ -27,8 +27,9 @@ const DEFAULT_PROMPT: &str = "You are engaged in conversation with user; You mus
 You resolve user provided tasks or queries using available tools/function calls.
 Anticipate and address related queries, providing necessary context and details.
 You should give clear, complete answers that minimize follow-up questions.
-Reply `***` instead of exit lines, farewell remarks or sign-offs at end of conversation.
 Your conversation is limited for one time assistantce so do not ask for more.
+Do not repeat. Be short spacific and factual with valid data.
+Reply `***` instead of exit lines, farewell remarks or sign-offs at end of conversation.
 
 ";
 
@@ -277,7 +278,27 @@ impl<'c> Ctx<'c> {
             .expect("failed to get last msg");
 
         match matches!(last_msg, Content { role, .. } if role == "model") {
-            true => Ok(()),
+            true => {
+                for c in &mut self.contents {
+                    c.parts.retain(|p| match p {
+                        Part::text(_) | Part::inlineData { .. } => true,
+                        _ => false,
+                    })
+                }
+
+                self.contents.retain(|c| !c.parts.is_empty());
+
+                // match last_msg.parts.last() {
+                //     Some(Part::text(t)) if !t.ends_with("\n") => {
+                //         self.channel.0.send_async("\n".into()).await?;
+                //         Ok(())
+                //     }
+                //     _ => Ok(()),
+                // }
+
+                Ok(())
+            }
+
             false => self.tick().await,
         }
     }
@@ -309,8 +330,8 @@ async fn main() -> anyhow::Result<()> {
         .with_thread_names(true)
         .init();
 
-    let (tx, _rx) = flume::bounded::<String>(0);
-    let (_tx, rx) = flume::bounded::<String>(0);
+    let (tx, _rx) = flume::unbounded::<String>();
+    let (_tx, rx) = flume::unbounded::<String>();
 
     let default_cfg = config_dir().await?;
     let r = tokio::spawn(async move {
@@ -343,20 +364,20 @@ async fn main() -> anyhow::Result<()> {
     let stdin = tokio::io::stdin();
     let mut reader = tokio::io::BufReader::new(stdin).lines();
 
-    while !r.is_finished() {
+    loop {
         tokio::select! {
             Ok(Some(msg)) = reader.next_line() => {
                 _ = tx.send_async(msg).await;
             }
             Ok(msg) = rx.recv_async() => {
                 stdout.write(cformat!("<dim>{msg}</>").as_bytes()).await?;
+                stdout.flush().await?;
 
                 if r.is_finished() {
-                    stdout.write(b"\n").await?;
-                    exit(0);
+                    drop(tx);
+                    break;
                 }
 
-                stdout.flush().await?;
             }
         }
     }

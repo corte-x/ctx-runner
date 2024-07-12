@@ -40,7 +40,8 @@ pub async fn send(
 
     let (parts, res) = sender.send_request(req).await?.into_parts();
 
-    tracing::debug!(name: "res", response=?parts);
+    let s = parts.status;
+    tracing::info!(name: "res", status=?s);
 
     let data_strm = res.into_data_stream();
 
@@ -56,7 +57,6 @@ pub async fn send(
     }))
 }
 
-#[instrument]
 pub async fn make(
     ref req: &'_ ChatCompletionRequest,
 ) -> anyhow::Result<impl futures_lite::Stream<Item = anyhow::Result<ChatCompletionResponse>>> {

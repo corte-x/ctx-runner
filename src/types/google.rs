@@ -80,6 +80,10 @@ pub struct Function {
     #[serde(default = "String::new", rename(deserialize = "Name"))]
     pub name: String,
     #[serde(skip_serializing)]
-    #[serde(rename(deserialize = "Exec"))]
+    #[serde(
+        rename(deserialize = "Exec"),
+        default = "String::new",
+        skip_serializing_if = "Content::is_empty"
+    )]
     pub exec: String,
 }
