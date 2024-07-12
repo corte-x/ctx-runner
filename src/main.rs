@@ -314,13 +314,9 @@ async fn main() -> anyhow::Result<()> {
 
     let default_cfg = config_dir().await?;
     let r = tokio::spawn(async move {
-        match Ctx::from(
-            (_tx.clone(), _rx.clone()),
-            &default_cfg.join("default.module"),
-        )
-        .await
-        .or(Ctx::new((_tx.clone(), _rx.clone())))
-        {
+        let cfg = default_cfg.join("default.module");
+        let ctx = Ctx::from((_tx.clone(), _rx.clone()), &cfg).await;
+        match ctx.or(Ctx::new((_tx.clone(), _rx.clone()))) {
             Ok(mut context) => {
                 while let Ok(msg) = _rx.recv_async().await {
                     context.set(msg);
