@@ -1,0 +1,13 @@
+Name = 'apt_install'
+Description = 'install a specified debian pakage'
+
+Exec = 'apt install "{{pkg_name}}" --no-install-recommends -y'
+
+[parameters]
+Required = [ 'pkg_name' ]
+Type = 'object'
+
+[parameters.properties.pkg_name]
+Description = 'name of a debian package'
+Type = 'string'
+

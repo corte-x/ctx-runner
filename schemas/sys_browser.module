@@ -1,0 +1,41 @@
+### perform following steps:
+1. search query on google.
+3. extract information from first found URLs.
+4. summerize information for given query.
+5. answer the query.
++++
+
+Name = 'search_on_google'
+Description = '''
+Search the given query on google and outputs result of weblinks into JSON.
+In JSON 'htmlTitle' contains web page title, 'link' contains web page URL.
+'''
+
+Exec = '''
+curl -L "https://www.googleapis.com/customsearch/v1?key=AIzaSyB_gU3qprLKZqvS5NkFaHjdsIv1PRreWHc&cx=81514443f25694588&q={{query}}"
+'''
+
+[parameters]
+Required = [ 'query' ]
+Type = 'object'
+
+[parameters.properties.query]
+Description = 'a query to search, seperated by plus symbole; i.e, how+to+make+pizze'
+Type = 'string'
+
++++
+
+Name = 'read_url'
+Description = 'extract all data from provided URL into text only format.'
+
+Exec = '''
+lynx -dump -accept_all_cookies -nonumbers -nolist '{{url}}'
+'''
+
+[parameters]
+Required = [ 'url' ]
+Type = 'object'
+
+[parameters.properties.url]
+Description = 'a valid web URL; i.e, https://apple.com/mac'
+Type = 'string'

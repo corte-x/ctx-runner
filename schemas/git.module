@@ -1,0 +1,58 @@
+## Following are example of task assistant can capable of doing by performing sequencial actions:
+1. To get commit message; Check what git changes are made.
++++
+
+
+Name = 'dir_difference'
+Description = 'shows changes between commits, commit and working tree, etc in git patch format.'
+
+Exec = '''
+git --no-pager -C '{{directory}}' diff
+'''
+
+[parameters]
+Required = [ 'directory' ]
+Type = 'object'
+
+[parameters.properties.directory]
+Description = 'absolute path of git directory'
+Type = 'string'
+
++++
+
+Name = 'file_difference'
+Description = 'Show changes between the working tree and a file'
+
+Exec = 'git --no-pager diff {{file}}'
+
+[parameters]
+Required = [ 'file' ]
+Type = 'object'
+
+[parameters.properties.file]
+Description = 'Path to the file to be diffed'
+Type = 'string'
+
++++
+
+Name = 'index_difference'
+Description = 'Compare the content and mode of blobs'
+
+Exec = 'git --no-pager diff-index {{options}} {{commit}} {{path}}'
+
+[parameters]
+Required = [ 'commit', 'path' ]
+Type = 'object'
+
+[parameters.properties.commit]
+Description = 'Commit to compare against'
+Type = 'string'
+
+[parameters.properties.path]
+Description = 'Path to the file or directory to diff'
+Type = 'string'
+
+[parameters.properties.options]
+Description = 'Options to modify the diff behavior'
+Type = 'string'
+

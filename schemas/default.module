@@ -1,0 +1,93 @@
+Name = 'sys_device_settings'
+Description = '''assistant whom can change device settings, i.e, audio level, wifi, bluetooth;'''
+
+[parameters]
+Required = [ 'input' ]
+Type = 'object'
+
+[parameters.properties.input]
+Description = 'an input for assistant'
+Type = 'string'
++++
+
+
+Name = 'sys_os'
+Description = '''
+assistant whom can do tasks related to operating system, i.e, install software, get system information etc.; it returns JSON data of conversation with user.
+
+## explaination of JSON content:
+candidate means a message, which is made of multiple parts, i.e, text, image etc.
+content represent inside of message.
+multiple different parts in content makes on single message.
+role represent author of the message; where `model` is used for assistant.
+'''
+
+[parameters]
+Required = [ 'input' ]
+Type = 'object'
+
+[parameters.properties.input]
+Description = 'an input for assistant'
+Type = 'string'
+
++++
+
+
+Name = 'sys_browser'
+Description = '''
+assistant whom can browse the internet; i.e, google search, read website etc.; it returns JSON data of conversation with user
+
+## explaination of JSON content:
+candidate means a message, which is made of multiple parts, i.e, text, image etc.
+content represent inside of message.
+multiple different parts in content makes on single message.
+role represent author of the message; where `model` is used for assistant.
+'''
+
+[parameters]
+Required = [ 'input' ]
+Type = 'object'
+
+[parameters.properties.input]
+Description = 'an input for assistant'
+Type = 'string'
+
+
++++
+
+Name = 'git'
+Description = '''
+a git assistant whom can perform tasks related to git; it returns JSON data of conversation with user
+
+## explaination of JSON content:
+candidate means a message, which is made of multiple parts, i.e, text, image etc.
+content represent inside of message.
+multiple different parts in content makes on single message.
+role represent author of the message; where `model` is used for assistant.
+'''
+
+[parameters]
+Required = [ 'input' ]
+Type = 'object'
+
+[parameters.properties.input]
+Description = 'an input for assistant'
+Type = 'string'
+
++++
+
+Name = 'ls'
+Description = 'list of files in one or more directories; output contains name of files and sub-directories inside it'
+
+Exec = '''
+ls --format=single-column -A{{#each directories}} '{{this}}'{{/each}}
+'''
+
+[parameters]
+Required = [ 'directories' ]
+Type = 'object'
+
+[parameters.properties.directories]
+Description = 'an array of absolute paths of directories; i.e of path, /usr/home'
+Items.Type = 'string'
+Type = 'array'
