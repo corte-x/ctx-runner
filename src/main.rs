@@ -274,7 +274,7 @@ impl<'c> Ctx<'c> {
         let last_msg = &self
             .contents
             .last()
-            .inspect(|last| tracing::info!(name: "recv", data =?last))
+            // .inspect(|last| tracing::info!(name: "recv", data =?last))
             .expect("failed to get last msg");
 
         match matches!(last_msg, Content { role, .. } if role == "model") {
@@ -288,18 +288,15 @@ impl<'c> Ctx<'c> {
 
                 self.contents.retain(|c| !c.parts.is_empty());
 
-                // match last_msg.parts.last() {
-                //     Some(Part::text(t)) if !t.ends_with("\n") => {
-                //         self.channel.0.send_async("\n".into()).await?;
-                //         Ok(())
-                //     }
-                //     _ => Ok(()),
-                // }
-
+                let c = &self.contents;
+                tracing::info!(name: "end", contents=?c);
                 Ok(())
             }
 
-            false => self.tick().await,
+            false => {
+                tokio::time::sleep(core::time::Duration::from_secs(30)).await;
+                self.tick().await
+            }
         }
     }
 }

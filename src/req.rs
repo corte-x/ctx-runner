@@ -15,7 +15,6 @@ use tracing::instrument;
 
 use crate::google::{ChatCompletionRequest, ChatCompletionResponse, Content, Part, Tool};
 
-#[instrument]
 pub async fn send(
     req: Request<Full<Bytes>>,
 ) -> anyhow::Result<impl futures_lite::Stream<Item = anyhow::Result<ChatCompletionResponse>>> {
