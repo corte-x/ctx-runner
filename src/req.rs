@@ -11,9 +11,8 @@ use hyper::{body::Bytes, Request};
 use native_tls::TlsConnector as NativeTlsConnector;
 use tokio::net::TcpStream;
 use tokio_native_tls::TlsConnector;
-use tracing::instrument;
 
-use crate::google::{ChatCompletionRequest, ChatCompletionResponse, Content, Part, Tool};
+use crate::google::{ChatCompletionRequest, ChatCompletionResponse};
 
 pub async fn send(
     req: Request<Full<Bytes>>,
@@ -37,7 +36,13 @@ pub async fn send(
         }
     });
 
-    let (parts, res) = sender.send_request(req).await?.into_parts();
+    let (parts, res) = loop {
+        let res = sender.send_request(req.clone()).await?;
+        match res.status().is_success() {
+            true => break res.into_parts(),
+            false => tokio::time::sleep(core::time::Duration::from_secs(10)).await,
+        }
+    };
 
     let s = parts.status;
     tracing::info!(name: "res", status=?s);

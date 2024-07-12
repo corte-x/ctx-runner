@@ -6,6 +6,7 @@ pub struct Response {
     pub content: String,
 }
 
+#[allow(non_camel_case_types, non_snake_case)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Part {
     text(String),
@@ -51,6 +52,7 @@ pub struct ChatCompletionRequest {
     pub system_instruction: Content,
 }
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Tool {
     functionDeclarations(Vec<Function>),

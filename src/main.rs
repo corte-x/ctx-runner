@@ -38,6 +38,7 @@ pub struct Ctx<'c> {
     sys: String,
     functions: Vec<Function>,
     pub contents: Vec<Content>,
+    is_ended: bool,
 
     channel: (flume::Sender<String>, flume::Receiver<String>),
 
@@ -50,6 +51,7 @@ impl<'c> Ctx<'c> {
             sys: DEFAULT_PROMPT.into(),
             functions: Vec::new(),
             contents: Vec::new(),
+            is_ended: false,
             channel,
             handlebars: handlebars::Handlebars::new(),
         })
@@ -66,6 +68,7 @@ impl<'c> Ctx<'c> {
             sys: DEFAULT_PROMPT.into(),
             functions: Vec::new(),
             contents: Vec::new(),
+            is_ended: false,
             channel,
 
             handlebars: handlebars::Handlebars::new(),
@@ -110,21 +113,8 @@ impl<'c> Ctx<'c> {
         self.contents.push(Content::user(input));
     }
 
-    pub fn is_ended(&self) -> bool {
-        if let Some(Content { parts, .. }) = self.contents.last() {
-            if parts.iter().any(|part| match part {
-                Part::text(s) if s.trim_end().trim_end_matches(".").ends_with("***") => true,
-                _ => false,
-            }) {
-                return true;
-            }
-        }
-
-        false
-    }
-
     #[async_recursion]
-    pub async fn tick(&mut self) -> anyhow::Result<()> {
+    pub async fn tick(&mut self) -> anyhow::Result<Vec<Content>> {
         let data = ChatCompletionRequest {
             contents: self.contents.clone(),
             tools: [Tool::functionDeclarations(self.functions.to_owned())],
@@ -168,30 +158,17 @@ impl<'c> Ctx<'c> {
                                 .await
                                 {
                                     Ok(mut context) => {
-                                        let q = serde_json::to_string(
-                                            &args
-                                                .get("input")
-                                                .and_then(serde_json::Value::as_str)
-                                                .context("no input found for context")?,
-                                        )?;
+                                        let q = args
+                                            .get("input")
+                                            .and_then(serde_json::Value::as_str)
+                                            .context("no input found for context")?;
 
                                         tracing::info!(name: "context", ctx=context.sys);
                                         tracing::info!(name: "input", input=q);
 
-                                        context.set(q);
+                                        context.set(q.into());
 
-                                        let last = loop {
-                                            context.tick().await?;
-
-                                            if context.is_ended() {
-                                                // passes an output of sub-contex
-                                                // back to parent.
-                                                break context.contents;
-                                            }
-
-                                            let line = self.channel.1.recv_async().await?;
-                                            context.contents.push(Content::user(line));
-                                        };
+                                        let last = context.tick().await?;
 
                                         self.contents.push(Content {
                                             parts: vec![Part::functionResponse {
@@ -242,6 +219,11 @@ impl<'c> Ctx<'c> {
                             }
                             Part::text(ref t) => {
                                 self.channel.0.send_async(t.into()).await?;
+
+                                if t.trim_end().trim_end_matches(".").ends_with("***") {
+                                    self.is_ended = true;
+                                }
+
                                 content_parts.push(part)
                             }
 
@@ -260,7 +242,7 @@ impl<'c> Ctx<'c> {
                     }
                 }
                 // exit on empty response.
-                None => return Ok(()),
+                None => return Ok(self.contents.drain(..).collect()),
             }
         }
 
@@ -271,30 +253,30 @@ impl<'c> Ctx<'c> {
             });
         }
 
-        let last_msg = &self
-            .contents
-            .last()
-            // .inspect(|last| tracing::info!(name: "recv", data =?last))
-            .expect("failed to get last msg");
+        let last_msg = &self.contents.last().expect("failed to get last msg");
 
-        match matches!(last_msg, Content { role, .. } if role == "model") {
-            true => {
-                for c in &mut self.contents {
+        match last_msg {
+            Content { role, .. } if role == "model" => {
+                self.contents.retain_mut(|c| {
                     c.parts.retain(|p| match p {
                         Part::text(_) | Part::inlineData { .. } => true,
                         _ => false,
-                    })
-                }
+                    });
 
-                self.contents.retain(|c| !c.parts.is_empty());
+                    !c.parts.is_empty()
+                });
 
                 let c = &self.contents;
                 tracing::info!(name: "end", contents=?c);
-                Ok(())
+
+                Ok(self.contents.drain(..).collect())
             }
 
-            false => {
-                tokio::time::sleep(core::time::Duration::from_secs(30)).await;
+            Content { role, .. } if role == "function" => self.tick().await,
+
+            _ => {
+                let line = self.channel.1.recv_async().await?;
+                self.contents.push(Content::user(line));
                 self.tick().await
             }
         }
@@ -348,13 +330,16 @@ async fn main() -> anyhow::Result<()> {
                         break;
                     }
 
-                    if context.is_ended() {
+                    if context.is_ended {
+                        drop(context);
                         break;
                     }
                 }
             }
             Err(err) => tracing::error!(name: "context", "Invalid configuration: {err}"),
         }
+
+        tracing::info!(name: "thread", "ended!");
     });
 
     let mut stdout = tokio::io::stdout();

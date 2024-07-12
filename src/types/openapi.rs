@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +45,7 @@ pub struct SchemaObj {
     pub items: Option<Box<Schema>>,
 }
 
+#[allow(non_camel_case_types)]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(untagged)]
 pub enum Schema {
