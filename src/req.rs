@@ -1,5 +1,5 @@
 use anyhow::Context;
-use color_print::cformat;
+use color_print::{cformat, cprintln};
 use futures_lite::{stream::NextFuture, StreamExt};
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{
@@ -37,7 +37,7 @@ pub async fn send(
 
     tokio::task::spawn(async move {
         if let Err(err) = conn.await {
-            log::debug!("{}", cformat!("Connection failed: {:?}", err));
+            cprintln!("{}", cformat!("Connection failed: {:?}", err));
         }
     });
 

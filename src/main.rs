@@ -1,4 +1,4 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::path::PathBuf;
 
 use async_recursion::async_recursion;
 use color_print::cprintln;
@@ -23,6 +23,7 @@ use google::{
     ChatCompletionRequest, ChatCompletionResponse, Content, Function, Part, Response, Tool,
 };
 use req::Event;
+use tracing::Level;
 
 #[derive(Debug, Clone)]
 pub struct Ctx<'c> {
@@ -152,7 +153,7 @@ impl<'c> Ctx<'c> {
                         Ok(mut context) => {
                             context.set(serde_json::to_string(&args["query"])?);
 
-                            cprintln!("<yellow!, dim>[context] {}</>", context.sys);
+                            tracing::info!(name: "context", "{}", context.sys);
 
                             let last = loop {
                                 context.tick().await?;
@@ -196,7 +197,7 @@ impl<'c> Ctx<'c> {
                                 cmd.args(["-c", &c]).output().await?.stdout
                             };
 
-                            cprintln!(
+                            tracing::info!(name: "context",
                                 "<dim>=== `{name}` ===\n{}---\n{}\n======</>",
                                 toml::to_string(&args)?,
                                 std::str::from_utf8(&stdout)?
@@ -228,8 +229,7 @@ impl<'c> Ctx<'c> {
 
         let last_msg = &self.contents.last().expect("failed to get last msg");
         if last_msg.role == "model" {
-            cprintln!("<dim>[tick]: {:?}</>", self.contents);
-            // exit at model reply
+            tracing::info!(name: "received", "{:?}", self.contents);
 
             let str = last_msg.parts.iter().fold(String::new(), |s, part| match part {
                 Part::text(t) => s + t,
@@ -249,7 +249,7 @@ impl<'c> Ctx<'c> {
         while let Some(ChatCompletionResponse {
             candidates: [mut candidate],
         }) = stream.next().await.and_then(|next| match next {
-            Event::Data(d) => Some(serde_json::from_str(&d).unwrap()),
+            Event::Data(d) => Some(serde_json::from_str(&d).expect(&format!("invalid JSON: {d}"))),
             _e => unreachable!("{:?}", _e),
         }) {
             while let Some(popped) = candidate.content.parts.pop() {
@@ -267,36 +267,42 @@ impl<'c> Ctx<'c> {
     }
 }
 
+#[tracing::instrument]
 pub async fn runner() -> anyhow::Result<(
-    JoinHandle<anyhow::Result<()>>,
+    JoinHandle<()>,
     (flume::Sender<String>, flume::Receiver<String>),
 )> {
     let (tx, _rx) = flume::unbounded::<String>();
     let (_tx, rx) = flume::unbounded::<String>();
 
     let default_cfg = config_dir().await?;
-    let handle = tokio::spawn(async move {
-        let mut context = Ctx::from(
+    let handle = tokio::spawn(async move {        
+        match Ctx::from(
             (_tx.clone(), _rx.clone()),
             &default_cfg.join("default.module"),
         )
-        .await?;
+        .await {
+            Ok(mut context) => {
+                while let Ok(msg) = _rx.recv_async().await {
+                    context.set(msg);
+                    
+                    if let Err(err) = context.tick().await {
+                        tracing::error!(name: "context", "Failed to run: {err}");
+                    }
 
-        while let Ok(msg) = _rx.recv_async().await {
-            context.set(msg);
-            context.tick().await?;
+                    if context.is_ended() {
+                        drop(context);
 
-            if context.is_ended() {
-                drop(context);
-
-                drop(_tx);
-                drop(_rx);
-                break;
-            }
+                        drop(_tx);
+                        drop(_rx);
+                        break;
+                    }
+                }
+            },
+            Err(err) => tracing::error!(name: "context", "Invalid configuration: {err}"),
         }
-
-        Ok::<_, anyhow::Error>(())
     });
+
 
     Ok((handle, (tx, rx)))
 }
@@ -335,12 +341,20 @@ async fn config_dir() -> anyhow::Result<&'static PathBuf> {
 // ask friend A, "Can he/she help?"; ask friend B "What comes after A?"
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .pretty()
+        .with_thread_names(true)
+        .with_max_level(tracing::Level::TRACE)
+        .init();
+
+
+
     let (runner, (tx, rx)) = runner().await?;
 
     let stdin = tokio::io::stdin();
     let mut reader = tokio::io::BufReader::new(stdin).lines();
 
-    while !runner.is_finished() {
+    loop {
         tokio::select! {
             Ok(Some(msg)) = reader.next_line() => {
                 tx.send_async(msg).await?;
@@ -351,7 +365,6 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    _ = runner.await?;
-
-    Ok(())
+    // _ = runner.await?;
+    // Ok(())
 }
