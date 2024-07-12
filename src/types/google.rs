@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -25,7 +23,7 @@ pub enum Part {
     },
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Content {
     pub parts: Vec<Part>,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -33,8 +31,12 @@ pub struct Content {
 }
 
 impl Content {
+    pub fn is_empty(&self) -> bool {
+        self.parts.is_empty()
+    }
+
     pub fn user(msg: String) -> Self {
-        Self {
+        Content {
             parts: vec![Part::text(msg)],
             role: "user".into(),
         }
@@ -45,6 +47,7 @@ impl Content {
 pub struct ChatCompletionRequest {
     pub contents: Vec<Content>,
     pub tools: [Tool; 1],
+    #[serde(skip_serializing_if = "Content::is_empty")]
     pub system_instruction: Content,
 }
 
@@ -55,7 +58,7 @@ pub enum Tool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Candidate {
-    pub content: Content,
+    pub content: Option<Content>,
     pub index: usize,
 }
 

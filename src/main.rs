@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, process::exit};
 
+use anyhow::Context;
 use async_recursion::async_recursion;
+use color_print::{cformat, cprint};
 use futures_lite::StreamExt;
 use http_body_util::Full;
 use hyper::{body::Bytes, Request};
@@ -19,10 +21,10 @@ mod openapi;
 mod req;
 
 use google::{
-    ChatCompletionRequest, ChatCompletionResponse, Content, Function, Part, Response, Tool,
+    Candidate, ChatCompletionRequest, ChatCompletionResponse, Content, Function, Part, Response,
+    Tool,
 };
 use req::Event;
-use tracing::Level;
 
 #[derive(Debug, Clone)]
 pub struct Ctx<'c> {
@@ -43,10 +45,12 @@ impl<'c> Ctx<'c> {
             contents: self.contents.clone(),
             tools: [Tool::functionDeclarations(self.functions.to_owned())],
             system_instruction: Content {
-                role: Default::default(),
                 parts: vec![Part::text(self.sys.to_owned())],
+                role: Default::default(),
             },
         };
+
+        tracing::debug!(name: "req", "raw({})", serde_json::to_string(&data)?);
 
         use anyhow::Context;
         let req = Request::builder()
@@ -54,7 +58,7 @@ impl<'c> Ctx<'c> {
             .uri("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:streamGenerateContent?alt=sse")
             .header(
                 hyper::header::CONTENT_TYPE,
-                "application/json; charset=utf-8",
+                "application/json",
             )
             .header("x-goog-api-key", std::env::var_os("GOOGLE_API_KEY").context("`GOOGLE_API_KEY` not found!")?.to_string_lossy().as_ref())
             .body(Full::new(Bytes::from(serde_json::to_vec(&data)?)))?;
@@ -119,9 +123,9 @@ impl<'c> Ctx<'c> {
     }
 
     pub fn is_ended(&self) -> bool {
-        if let Some(last) = self.contents.last() {
-            if last.parts.iter().any(|part| match part {
-                Part::text(s) if s.trim_end().ends_with("END") => true,
+        if let Some(Content { parts, .. }) = self.contents.last() {
+            if parts.iter().any(|part| match part {
+                Part::text(s) if s.trim_end().trim_end_matches(".").ends_with("END") => true,
                 _ => false,
             }) {
                 return true;
@@ -150,9 +154,17 @@ impl<'c> Ctx<'c> {
                     .await
                     {
                         Ok(mut context) => {
-                            context.set(serde_json::to_string(&args["query"])?);
+                            let q = serde_json::to_string(
+                                &args
+                                    .get("query")
+                                    .and_then(serde_json::Value::as_str)
+                                    .context("no query found for context")?,
+                            )?;
 
                             tracing::info!(name: "context", "{}", context.sys);
+                            tracing::info!(name: "query", "{}", q);
+
+                            context.set(q);
 
                             let last = loop {
                                 context.tick().await?;
@@ -196,18 +208,15 @@ impl<'c> Ctx<'c> {
                                 cmd.args(["-c", &c]).output().await?.stdout
                             };
 
-                            tracing::info!(name: "context",
-                                "<dim>=== `{name}` ===\n{}---\n{}\n======</>",
-                                toml::to_string(&args)?,
-                                std::str::from_utf8(&stdout)?
-                            );
+                            tracing::info!(name, args = serde_json::to_string(&args)?);
+                            tracing::info!(name, output = std::str::from_utf8(&stdout)?);
 
                             self.contents.push(Content {
                                 parts: vec![Part::functionResponse {
                                     name: name.clone(),
                                     response: Response {
                                         name: name,
-                                        content: String::from_utf8(stdout)?,
+                                        content: std::str::from_utf8(&stdout)?.into(),
                                     },
                                 }],
                                 role: "function".into(),
@@ -227,36 +236,54 @@ impl<'c> Ctx<'c> {
         }
 
         let last_msg = &self.contents.last().expect("failed to get last msg");
-        if last_msg.role == "model" {
-            tracing::info!(name: "received", "{:?}", self.contents);
+        match last_msg {
+            Content { parts, role } if role == "model" => {
+                tracing::info!(name: "recv", data =?self.contents);
 
-            let str = last_msg.parts.iter().fold(String::new(), |s, part| match part {
-                Part::text(t) => s + t,
-                Part::inlineData { mimeType, data } => {
-                    s + format!("![](data:{mimeType};base64,{data})").as_str()
-                },
-                _ => s
-            });
-            
-            self.channel.0.send_async(str).await?;
+                let str = parts.iter().fold(String::new(), |s, part| match part {
+                    Part::text(t) => s + t,
+                    Part::inlineData { mimeType, data } => {
+                        s + format!("![](data:{mimeType};base64,{data})").as_str()
+                    }
+                    _ => s,
+                });
 
-            return Ok(());
+                self.channel.0.send_async(str).await?;
+
+                return Ok(());
+            }
+
+            _ => (),
         }
 
         let mut stream = self.send().await?;
 
         while let Some(ChatCompletionResponse {
-            candidates: [mut candidate],
-        }) = stream.next().await.and_then(|next| match next {
-            Event::Data(d) => Some(serde_json::from_str(&d).expect(&format!("invalid JSON: {d}"))),
-            _e => unreachable!("{:?}", _e),
-        }) {
-            while let Some(popped) = candidate.content.parts.pop() {
-                match popped {
-                    Part::functionResponse { .. } => unreachable!("{popped:?}"),
-                    Part::text(_) | Part::inlineData { .. } => self.content_parts.push(popped),
-                    Part::functionCall { .. } => self.function_parts.push(popped),
+            candidates: [Candidate { content, .. }],
+        }) = stream
+            .next()
+            .await
+            .inspect(|d| {
+                tracing::debug!(name: "event", "{}", d);
+            })
+            .and_then(|next| match next {
+                Event::Data(d) => serde_json::from_str(&d).ok(),
+                _e => unreachable!("{:?}", _e),
+            })
+        {
+            match content {
+                Some(Content { mut parts, .. }) => {
+                    while let Some(popped) = parts.pop() {
+                        match popped {
+                            Part::functionResponse { .. } => unreachable!("{popped:?}"),
+                            Part::text(_) | Part::inlineData { .. } => {
+                                self.content_parts.push(popped)
+                            }
+                            Part::functionCall { .. } => self.function_parts.push(popped),
+                        }
+                    }
                 }
+                None => anyhow::bail!("no content received"),
             }
         }
 
@@ -275,18 +302,20 @@ pub async fn runner() -> anyhow::Result<(
     let (_tx, rx) = flume::unbounded::<String>();
 
     let default_cfg = config_dir().await?;
-    let handle = tokio::spawn(async move {        
+    let handle = tokio::spawn(async move {
         match Ctx::from(
             (_tx.clone(), _rx.clone()),
             &default_cfg.join("default.module"),
         )
-        .await {
+        .await
+        {
             Ok(mut context) => {
                 while let Ok(msg) = _rx.recv_async().await {
                     context.set(msg);
-                    
+
                     if let Err(err) = context.tick().await {
                         tracing::error!(name: "context", "Failed to run: {err}");
+                        break;
                     }
 
                     if context.is_ended() {
@@ -297,11 +326,10 @@ pub async fn runner() -> anyhow::Result<(
                         break;
                     }
                 }
-            },
+            }
             Err(err) => tracing::error!(name: "context", "Invalid configuration: {err}"),
         }
     });
-
 
     Ok((handle, (tx, rx)))
 }
@@ -311,10 +339,8 @@ async fn config_dir() -> anyhow::Result<&'static PathBuf> {
     use anyhow::Context;
 
     CTX.get_or_try_init(|| async {
-
         std::env::var_os("GOOGLE_API_KEY").context("`GOOGLE_API_KEY` not found!")?;
 
- 
         let ctx_dir = dirs::home_dir()
             .context("failed to get user home")?
             .join(".config")
@@ -322,48 +348,65 @@ async fn config_dir() -> anyhow::Result<&'static PathBuf> {
 
         tokio::fs::create_dir_all(&ctx_dir).await?;
 
-        _ = tokio::fs::OpenOptions::new()
-            .read(true)
+        let default_cfg = tokio::fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .open(ctx_dir.join("default.module")).await?
-            .write_all(b"You are a helpful AI assistant engaged in conversation with user; \
-                You resolve user proviced tasks or answer a user's query using provided tools/functions. \
-                Use markdown formating in response if possible. \
-                Reply \"END\" instead of exit lines, farewell remarks or sign-offs at end of conversation.\n+++").await?;
+            .create_new(true)
+            .open(ctx_dir.join("default.module"))
+            .await;
+
+        if Some(std::io::ErrorKind::AlreadyExists)
+            != default_cfg.as_ref().err().map(std::io::Error::kind)
+            || default_cfg.is_ok()
+        {
+            _ = default_cfg?
+                .write_all(
+                    b"You are engaged in conversation with user.
+You should give clear, complete answers that minimize follow-up questions.
+You resolve user provided tasks or queries using available tools/functions.
+Anticipate and address related queries, providingnecessary context and deatails.
+Avoid ending responses with prompts or questions unless instructed.
+Reply 'END' instead of exit lines, farewell remarks or sign-offs at end of conversation.
++++",
+                )
+                .await?;
+        }
 
         Ok(ctx_dir)
     })
     .await
 }
 
-// ask friend A, "Can he/she help?"; ask friend B "What comes after A?"
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .pretty()
         .with_thread_names(true)
-        .with_max_level(tracing::Level::TRACE)
         .init();
 
+    let (r, (tx, rx)) = runner().await?;
 
-
-    let (runner, (tx, rx)) = runner().await?;
-
+    let mut stdout = tokio::io::stdout();
     let stdin = tokio::io::stdin();
     let mut reader = tokio::io::BufReader::new(stdin).lines();
 
-    loop {
+    while !r.is_finished() {
         tokio::select! {
             Ok(Some(msg)) = reader.next_line() => {
-                tx.send_async(msg).await?;
+                _ = tx.send_async(msg).await;
             }
             Ok(msg) = rx.recv_async() => {
-                println!("{msg}");
+                stdout.write(cformat!("<dim>{msg}</>").as_bytes()).await?;
+
+                if r.is_finished() {
+                    stdout.write(b"\n").await;
+                }
+
+                stdout.flush().await?;
             }
         }
     }
 
-    // _ = runner.await?;
-    // Ok(())
+    r.await?;
+
+    exit(0)
 }

@@ -1,3 +1,5 @@
+use core::fmt;
+
 use anyhow::Context;
 use futures_lite::StreamExt;
 use http_body_util::{BodyExt, Full};
@@ -14,6 +16,25 @@ pub enum Event {
     #[default]
     EOF,
 }
+
+impl fmt::Display for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Event::Retry(s) => f.write_fmt(format_args!("retry({s})")),
+            Event::Event(s) => f.write_fmt(format_args!("event({s})")),
+            Event::Data(s) => f.write_fmt(format_args!("data({s})")),
+            Event::Id(s) => f.write_fmt(format_args!("id({s})")),
+            Event::Comment(s) => f.write_fmt(format_args!("comment({s})")),
+            Event::EOF => write!(f, "EOF"),
+        }
+    }
+}
+
+// curl \
+//    -H 'Content-Type: application/json' \
+//    -H 'x-goog-api-key: AIzaSyBShBmCAqwejfhIoZdqf0EFiD_aqoYRsVA' \
+//    -d @./data.json \
+//    -X POST 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:streamGenerateContent?alt=sse'
 
 pub async fn send(
     req: Request<Full<Bytes>>,
@@ -75,6 +96,8 @@ pub async fn send(
             let Some(value) = parts.next() else {
                 return Some(Event::EOF);
             };
+
+            let value = value.trim_ascii_end();
 
             match label {
                 b"data" => Some(Event::Data(
